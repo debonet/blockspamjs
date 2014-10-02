@@ -1,10 +1,10 @@
 BlockSpam.js
-------------
+============
 
 NodeJS spam filter system.
 
 Technique
----------
+=========
 
 The current version implements a baysian filtering system. Future
 plans include:
@@ -15,10 +15,10 @@ plans include:
 
 
 Usage
------
+=====
 
 Procmail
-========
+--------
 
 In .procmailrc
 

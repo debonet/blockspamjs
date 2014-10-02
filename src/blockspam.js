@@ -71,14 +71,19 @@ var fTrackStats = function(vs,bHam,stat){
 // ---------------------------------------------------------------------------
 var fPurgeRarities = function(stat, rThreshold){
 	var av = stat.av;
+	var c=0;
 	for (s in av){
 		if (av.hasOwnProperty(s)){
 			var cAge = stat.nGeneration - av[s][2];
 			if (av[s][1] / cAge < rThreshold){
-				delete aaStat[s];
+				delete av[s];
+			}
+			else{
+				c++;
 			}
 		}
 	};
+	console.log("fields",c);
 };
 
 
@@ -112,58 +117,11 @@ var fvsProcessMessage = function(s){
 	s=s.replace(/[;=,]/g," ");
 	var vs=s.split(/[\s]+/);
 	vs = fvsExcludeNonWords(vs);
-	vs = fvsPairs(vs);
+	//	vs = fvsPairs(vs);
 	vs = fvsUnique(vs);
-	console.log(vs.length);
 	return vs;
 };
 
-
-
-
-// ---------------------------------------------------------------------------
-var nsFs = require("fs");
-var Yargs = require("yargs");
-
-var aArg = Yargs
-	.usage('[-spam|-ham] [-database <database-file>]')
-	.demand(0)
-
-	.boolean('h')
-	.default('h',false)
-	.alias('h', 'ham')
-	.describe('h', "Message is ham")
-
-	.boolean('s')
-	.default('s',false)
-	.alias('s', 'spam')
-	.describe('s', "Message is spam")
-
-	.string('d')
-	.default('d',"spamdb.json")
-	.alias('d', 'database')
-	.describe('d', "Database file")
-
-	.check(function(aArg){return !aArg["ham"] || !aArg["spam"];})
-
-	.argv;
-
-
-// ---------------------------------------------------------------------------
-var stream = process.stdin;
-stream.setEncoding('utf8');
-
-var sMessage = "";
-
-// ---------------------------------------------------------------------------
-stream.on('readable', function() {
-  var s = process.stdin.read();
-  if (s === null) {
-		return;
-	}
-
-	sMessage += s;
-});
 
 
 // ---------------------------------------------------------------------------
@@ -181,8 +139,57 @@ var frEvaluate = function(vs,stat){
 	});
 
 
-	return c ? (rT/c) : 0.5;
+	return c ? 1 - (rT/c) : 0.5;
 };
+
+
+
+
+
+// ---------------------------------------------------------------------------
+var nsFs = require("fs");
+var Yargs = require("yargs");
+
+var aArg = Yargs
+	.usage('[-spam|-ham] [-database <database-file>] [<mail-file>]')
+	.demand(0)
+
+	.boolean('h')
+	.default('h',false)
+	.alias('h', 'ham')
+	.describe('h', "Message is ham")
+
+	.boolean('s')
+	.default('s',false)
+	.alias('s', 'spam')
+	.describe('s', "Message is spam")
+
+	.string('d')
+	.default('d',"spamdb.json")
+	.alias('d', 'database')
+	.describe('d', "Database file")
+	
+	.check(function(aArg){return !aArg["ham"] || !aArg["spam"];})
+	
+	.argv;
+
+
+/*
+
+// ---------------------------------------------------------------------------
+var stream = nsFs.createReadStream(aArg._[0] || "/dev/stdin");
+
+var sMessage = "";
+
+// ---------------------------------------------------------------------------
+stream.on('readable', function() {
+  var s = stream.read();
+  if (s === null) {
+		return;
+	}
+
+	sMessage += s;
+});
 
 
 // ---------------------------------------------------------------------------
@@ -205,9 +212,9 @@ stream.on('end', function() {
 
 		if (aArg["ham"] || aArg["spam"]){
 			fTrackStats(vs, aArg["ham"], stat);
-			fPurgeRarities(stat, 0.00001);
+			fPurgeRarities(stat, 0.0005);
 			nsFs.writeFile(aArg["database"], JSON.stringify(stat));
-			console.log(stat);
+			//console.log(stat);
 		}
 		else{
 			var r = frEvaluate(vs, stat);
@@ -218,3 +225,46 @@ stream.on('end', function() {
 	});
 
 });
+*/
+
+
+var nsHttp = require('http');
+nsFs.readFile(aArg["database"], function(err,buff){
+	var stat;
+	if (err){
+		stat = {
+			nGeneration : -1,
+			av : {}
+		};
+	}
+	else{
+		stat = JSON.parse(buff.toString());
+	}
+								
+	nsHttp.createServer(function (req, res) {
+		console.log(req);
+		var sMessage = req.body;
+		stat.nGeneration++;
+		var vs = fvsProcessMessage(sMessage);
+																			
+		if (aArg["ham"] || aArg["spam"]){
+			fTrackStats(vs, aArg["ham"], stat);
+			fPurgeRarities(stat, 0.0005);
+			res.writeHead(200, {'Content-Type': 'text/plain'});
+			res.end('added\n');
+
+			//console.log(stat);
+		}
+		else{
+			var r = frEvaluate(vs, stat);
+			res.writeHead(200, {'Content-Type': 'text/plain'});
+			res.end("score: " + r);
+		}
+
+	}).listen(1337);
+});
+
+
+
+
+
