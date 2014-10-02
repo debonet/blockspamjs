@@ -14,3 +14,25 @@ plans include:
 * automatic whitelists
 
 
+Usage
+-----
+
+Procmail
+========
+
+In .procmailrc
+
+~~~
+:0fw
+| node blockspam.js -d ~/.spamdb.json
+
+:0
+* ^X-Spamblock-Score: \*\*\*\*\*\*\*
+.maildir/.spam
+
+:0
+* ^X-Spamblock-Score: \*\*\*\*\*
+.maildir/.maybe-spam
+
+
+~~~
