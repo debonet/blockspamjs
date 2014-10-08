@@ -144,125 +144,254 @@ var frEvaluate = function(vs,stat){
 
 
 
-
+// ---------------------------------------------------------------------------
+var fsRepeat = function(s,c){
+	var sOut = "";
+	for (var n=0; n<c; n++){
+		sOut += s;
+	}
+	return sOut;
+};
 
 // ---------------------------------------------------------------------------
-var nsFs = require("fs");
-var Yargs = require("yargs");
+var fHandleEmailStream = function(stream, bHam, bSpam, stat, fCallback){
 
-var aArg = Yargs
-	.usage('[-spam|-ham] [-database <database-file>] [<mail-file>]')
-	.demand(0)
-
-	.boolean('h')
-	.default('h',false)
-	.alias('h', 'ham')
-	.describe('h', "Message is ham")
-
-	.boolean('s')
-	.default('s',false)
-	.alias('s', 'spam')
-	.describe('s', "Message is spam")
-
-	.string('d')
-	.default('d',"spamdb.json")
-	.alias('d', 'database')
-	.describe('d', "Database file")
-	
-	.check(function(aArg){return !aArg["ham"] || !aArg["spam"];})
-	
-	.argv;
-
-
-/*
-
-// ---------------------------------------------------------------------------
-var stream = nsFs.createReadStream(aArg._[0] || "/dev/stdin");
-
-var sMessage = "";
-
-// ---------------------------------------------------------------------------
-stream.on('readable', function() {
-  var s = stream.read();
-  if (s === null) {
-		return;
+	if (bHam && bSpam){
+		return fCallback("can't be ham and spam!");
 	}
 
-	sMessage += s;
-});
+	var sMessage = "";
+
+	// --------------------
+	stream.on('readable', function() {
+		var s = stream.read();
+		if (s === null) {
+			return;
+		}
+
+		sMessage += s;
+	});
+
+
+	if (bHam || bSpam){
+		// --------------------
+		stream.on('end', function() {
+			fCallback(null,"message added as " + (bHam?"ham":"spam"), sMessage);
+			var vs = fvsProcessMessage(sMessage);
+			fTrackStats(vs, bHam, stat);
+			if ((stat.nGeneration%10) === 0){
+				fPurgeRarities(stat, 0.0005);
+			}
+		});
+	}
+	else{
+		stream.on('end', function() {
+			var vs = fvsProcessMessage(sMessage);
+			var r = frEvaluate(vs, stat);
+			var nScore = Math.floor(r*100);
+			var sScoreStar = fsRepeat('*', Math.floor(r*20)+1);
+			sMessage = (
+				""
+					+ "X-BlockSpam-Score: " + nScore + "\n" 
+					+ "X-BlockSpam-Stars: " + sScoreStar + "\n" 
+					+ sMessage
+					+ "\n"
+					+ "-----------------------\n"
+					+ "BlockSpam-Score: "  + nScore + "\n"
+					+ "\n"
+			);
+			fCallback(null, "score: " + nScore, sMessage);
+		});
+	}
+};
 
 
 // ---------------------------------------------------------------------------
-stream.on('end', function() {
-
-	nsFs.readFile(aArg["database"], function(err,buff){
+var fLoadStats = function(sfl, fCallback){
+	nsFs.readFile(sfl, function(err,buff){
 		var stat;
-		if (err){
+		try{
+			stat = JSON.parse(err?"invalid":buff.toString());
+		}
+		catch(e){
 			stat = {
 				nGeneration : -1,
 				av : {}
 			};
 		}
-		else{
-			stat = JSON.parse(buff.toString());
-		}
 
-		stat.nGeneration++;
-		var vs = fvsProcessMessage(sMessage);
-
-		if (aArg["ham"] || aArg["spam"]){
-			fTrackStats(vs, aArg["ham"], stat);
-			fPurgeRarities(stat, 0.0005);
-			nsFs.writeFile(aArg["database"], JSON.stringify(stat));
-			//console.log(stat);
-		}
-		else{
-			var r = frEvaluate(vs, stat);
-			console.log("score: ",r);
-		}
+		fCallback(null, stat);
+	});
+};
 
 
+// ---------------------------------------------------------------------------
+var fWriteStats = function(sfl, stat, fCallback){
+	console.log("writing database");
+	nsFs.writeFile(sfl, JSON.stringify(stat), fCallback);
+};
+
+
+// ---------------------------------------------------------------------------
+var fDaemonMode = function(sflDatabase, nPort){
+	console.log("Daemon mode");
+	fLoadStats(sflDatabase, function(err, stat){
+		nsHttp.createServer(function (req, res) {
+			var bHam  = (req.url === "/ham" );
+			var bSpam = (req.url === "/spam");
+			var bTraining = bHam || bSpam;
+			if (bTraining){
+				stat.nGeneration++;
+			}
+			var tm = new Date().getTime();
+			fHandleEmailStream(req, bHam, bSpam, stat, function(err,s, sMessage){
+				console.log("processed", s, ((new Date().getTime())-tm)/1000);
+				res.writeHead(200, {'Content-Type': 'text/plain'});
+				res.end(bTraining ? s : sMessage);
+				if (bTraining && (stat.nGeneration % 50) === 0){
+					fWriteStats(sflDatabase, stat);
+				}					
+			});
+		}).listen(nPort);
+	});
+};
+
+// ---------------------------------------------------------------------------
+var fClientMode = function(
+	sflMessage, bHam, bSpam, sflDatabase, sServer, nPort
+){
+	var sPath = bHam? "/ham" : (bSpam ? "/spam" : "/score");
+	var aOptions = {
+		hostname : sServer,
+		port     : nPort,
+		method   : "POST",
+		path     : sPath,
+	};
+	var req=nsHttp.request(aOptions, function(res){
+		res.setEncoding('utf8');
+		res.on('data', function (s) {
+			console.log(s);
+		}); 
+	});
+	req.on('error', function(){
+		console.log("COULD NOT OPEN");
+		process.exit(1);
 	});
 
-});
-*/
+	var stream = nsFs.createReadStream(sflMessage);
+	stream.pipe(req);
+};
 
+// ---------------------------------------------------------------------------
+var fStandaloneMode = function(sflMessage, bHam, bSpam, sflDatabase){
+	fLoadStats(sflDatabase, function(err, stat){
+		var stream = nsFs.createReadStream(sflMessage);
+		var bTraining = bHam || bSpam;
+		if (bTraining){
+			stat.nGeneration++;
+		}
+		fHandleEmailStream(
+			stream, bHam, bSpam, stat, function(err,s, sMessage){
+				console.log((bHam || bSpam)?s:sMessage);
+				if (bTraining){
+					fWriteStats(sflDatabase, stat);
+				}
+			}
+		);
+	});
+};
 
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+var nsFs = require("fs");
 var nsHttp = require('http');
-nsFs.readFile(aArg["database"], function(err,buff){
-	var stat;
-	if (err){
-		stat = {
-			nGeneration : -1,
-			av : {}
-		};
-	}
-	else{
-		stat = JSON.parse(buff.toString());
-	}
-								
-	nsHttp.createServer(function (req, res) {
-		console.log(req);
-		var sMessage = req.body;
-		stat.nGeneration++;
-		var vs = fvsProcessMessage(sMessage);
-																			
-		if (aArg["ham"] || aArg["spam"]){
-			fTrackStats(vs, aArg["ham"], stat);
-			fPurgeRarities(stat, 0.0005);
-			res.writeHead(200, {'Content-Type': 'text/plain'});
-			res.end('added\n');
+var Yargs = require("yargs");
 
-			//console.log(stat);
-		}
-		else{
-			var r = frEvaluate(vs, stat);
-			res.writeHead(200, {'Content-Type': 'text/plain'});
-			res.end("score: " + r);
-		}
+var fMain = function(){
+	var yargs = Yargs
+		.usage(
+			''
+				+ 'Filter out spam mail\n'
+				+ 'Usage:\n'
+				+ '\tSimple mode: $0 [-s|-h] [<email-message>]'
+				+ '\tDaemon mode: $0 -d'
+				+ '\tClient mode: $0 -c [-s|-h] [<email-message>]'
+		)
+		.demand(0)
 
-	}).listen(1337);
-});
+		.boolean('help')
+		.describe('help', "Get help")
+
+		.boolean('h')
+		.default('h',false)
+		.alias('h', 'ham')
+		.describe('h', "Train using message as ham")
+
+		.boolean('s')
+		.default('s',false)
+		.alias('s', 'spam')
+		.describe('s', "Train using message as spam")
+
+		.string('d')
+		.default('d',false)
+		.alias('d', 'daemon')
+		.describe('d', "Daemon mode. Launch server. See --port option")
+
+		.string('c')
+		.default('c',false)
+		.alias('c', 'client')
+		.describe('c', "Pass message to daemon for evaluation or training")
+
+		.string('server')
+		.default('server',"localhost")
+		.describe('server', "Hostname of the daemon")
+
+		.string('p')
+		.default('p',"1025")
+		.alias('p', 'port')
+		.describe('p', "Port used by daemon")
+	
+		.string('db')
+		.default('db',"blockspam.db")
+		.alias('db', 'database')
+		.describe('db', "Database file")
+	
+		.check(function(aArg){
+			(!aArg["ham"] || !aArg["spam"]) 
+				&& (!aArg["client"] || !aArg["daemon"]) 
+		});
+	
+	var aArg = yargs.argv;
+
+	if (aArg["help"]){
+		yargs.showHelp();
+		process.exit();
+	}
+
+	var sflDatabase = aArg["database"];
+	var nPort       = aArg["port"]
+	var sServer     = aArg["server"];
+	var bHam        = aArg["ham"];
+	var bSpam       = aArg["spam"];
+	var sflMessage  = aArg._[0] || "/dev/stdin";
+
+	// daemon mode
+	if (aArg["daemon"]){
+		fDaemonMode(sflDatabase, nPort);
+	}
+	// client mode
+	else if (aArg["client"]){
+		fClientMode(sflMessage, bHam, bSpam, sflDatabase, sServer, nPort);
+	}
+	// standalone mode
+	else{ 
+		fStandaloneMode(sflMessage, bHam, bSpam, sflDatabase);
+	}
+
+}
+
+fMain();
+
 
 
 
