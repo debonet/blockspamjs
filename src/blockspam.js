@@ -127,7 +127,9 @@ var frEvaluateMessage = function(vsMessage, stat){
 	vsMessage.forEach(function(s){
 		if (s in avc){
 			var r = (avc[s][0] / avc[s][1]);
-			r = ((2*r-1)*(2*r-1))/2+.5;
+			r = 2*r - 1;
+			var z = r<0?-1:1;
+			r = Math.pow(Math.abs(r),.5)*z / 2 + 0.5;
 			rT += r;
 			c++;
 		}
