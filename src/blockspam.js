@@ -18,7 +18,7 @@ var fvsExcludeNonWords = function(vs){
 		}
 
 		if (s.match(reEmail)){
-			s= s.replace(/.*</,'').replace(/>.*/);
+			s= s.replace(/.*</,'').replace(/>.*/,'');
 			return vsOut.push(s);
 		}
 
@@ -126,11 +126,12 @@ var frEvaluateMessage = function(vsMessage, stat){
 
 	vsMessage.forEach(function(s){
 		if (s in avc){
-			rT += (avc[s][0] / avc[s][1]);
+			var r = (avc[s][0] / avc[s][1]);
+			r = ((2*r-1)*(2*r-1))/2+.5;
+			rT += r;
 			c++;
 		}
 	});
-
 
 	return c ? 1 - (rT/c) : 0.5;
 };
@@ -244,13 +245,13 @@ var fEvaluateEmail = function(stream, bGuess, stat, fCallback){
 
 	stream.on('end', function() {
 		var aHeader   = faHeaderProcess(sMessage);
-		var vsMessage = fvsMessageProcess(sMessage);
 		var rBody  = null;
 		var rSender   = frEvaluateSender(aHeader,stat) 
 		
 		var bSenderGood = rSender!==false && (rSender > .75 || rSender<.25);
 
 		if (!bSenderGood || bGuess){
+			var vsMessage = fvsMessageProcess(sMessage);
 			rBody = frEvaluateMessage(vsMessage, stat);
 		}
 
@@ -328,7 +329,7 @@ var fLoadStats = function(sfl, fCallback){
 		catch(e){
 			stat = {
 				nGeneration : -1,
-				avcBody    : {},
+				avcBody     : {},
 				avrSender   : {}
 			};
 		}
